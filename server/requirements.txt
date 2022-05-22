@@ -1,0 +1,5 @@
+msgpack_numpy==0.4.7.1
+msgpack_python==0.5.6
+numpy==1.22.3
+pandas==1.4.1
+pyzmq==23.0.0

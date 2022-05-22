@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile
+    command:
+      - bash
+    volumes:
+      - ./server:/server
+    restart: always
+    init: true
+    tty: true
+    stdin_open: true
+
+  client:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    command:
+      - bash
+    volumes:
+      - ./client:/client
+    ports:
+      - 8050:8050
+    restart: always
+    init: true
+    tty: true
+    stdin_open: true
