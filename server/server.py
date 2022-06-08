@@ -37,14 +37,6 @@ if not data_is_scaled:
         rpi[n]["air_pressure"] = rpi[n]["air_pressure"] / 100                                   # Mili Bars
         rpi[n]["transpiration"] = rpi[n]["transpiration"] / 1000                                # Percent
 
-# Range selection
-select_range = True
-if select_range:
-    start_datetime = (max(rpi[0]["timestamp"][len(rpi[0]["timestamp"])-1],rpi[1]["timestamp"][len(rpi[1]["timestamp"])-1],rpi[2]["timestamp"][len(rpi[2]["timestamp"])-1],rpi[3]["timestamp"][len(rpi[3]["timestamp"])-1])-timedelta(hours=1))
-    end_datetime   = max(rpi[0]["timestamp"][len(rpi[0]["timestamp"])-1],rpi[1]["timestamp"][len(rpi[1]["timestamp"])-1],rpi[2]["timestamp"][len(rpi[2]["timestamp"])-1],rpi[3]["timestamp"][len(rpi[3]["timestamp"])-1])
-    for n in range(len(rpi)):
-        mask = (rpi[n]['timestamp'] > start_datetime) & (rpi[n]['timestamp'] <= end_datetime)
-        rpi[n] = rpi[n].loc[mask]
 
 def moving_average(x, w=6, mode='same'):
     if(len(x)!=0):

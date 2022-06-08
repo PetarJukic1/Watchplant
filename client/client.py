@@ -1,9 +1,3 @@
-""" 
-# app.py - example Dash + ZMQ + msgpack + numpy monitor 
-This app receives data from zmq_pub.py, and plots it.
-Run the app, browse to localhost:8085 in your web browser, and run zmq_pub.py in a different terminal.
-"""
-from multiprocessing.sharedctypes import Value
 from dash import Dash, dcc, html, Input, Output
 import dash_daq as daq
 import zmq
@@ -13,7 +7,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
-from datetime import datetime
+from datetime import timedelta
+from datetime import date
+from waitress import serve
+from flask import Flask
 
 rpi = []
 
@@ -100,8 +97,6 @@ def recv_zmq(topic='data'):
         topic: topic subscribed to
     Returns numpy array data
     """
-    # Note - context managing socket as it can't be shared between threads
-    # This makes sure the socket is opened and closed by whatever thread Dash gives it
     with create_zmq_socket() as socket:
         topic, msg = demogrify(socket.recv_string())
     return msg
@@ -127,7 +122,28 @@ app.layout = html.Div(children=[
         multi=False,
         clearable=False,
         style={"width":"50%"},
+    ),  
+    html.Label(['Select amount of days to show:']),
+    html.Div([dcc.RangeSlider(
+        id='time-slider',
+        marks={
+            1: '1 day',
+            2: '2 days',
+            3: '3 days',
+            4: '4 days',
+            5: '5 days',
+            6: '6 days',
+            7: '7 days',
+        },
+        step=1,
+        min=1,
+        max=7,
+        value=[1],
+        allowCross=False,
+        updatemode='mouseup',
+        included=True,
     ),
+    ], style={"width": "80%"}),
     html.Div(
         id='graph-div',
         children=[]
@@ -139,12 +155,19 @@ app.layout = html.Div(children=[
     )
 ])
 
+server = Flask(__name__)
+server = app.server
+@server.route("/")
+def display():
+    return "hello"
+
 # The updating is done with this callback
 @app.callback(
     Output('graph-div', 'children'),
-    Input('interval-component', 'n_intervals'),
-    Input(component_id='dropdown', component_property='value'))
-def update(n, dropdown):
+    Input(component_id='interval-component', component_property='n_intervals'),
+    Input(component_id='dropdown', component_property='value'),
+    Input(component_id='time-slider', component_property='value'))
+def update(n, dropdown, days):
     data = recv_zmq('data')
     dataframe = pd.DataFrame([data])
     #print(dataframe)
@@ -159,27 +182,49 @@ def update(n, dropdown):
     elif (dataframe['sender_hostname'] == 'rpi3').values[0]:
         rpi[3] = rpi[3].append(dataframe, ignore_index=True)
     
+    rpi_temp = []
+    rpi_temp.append(pd.DataFrame())
+    rpi_temp.append(pd.DataFrame())
+    rpi_temp.append(pd.DataFrame())
+    rpi_temp.append(pd.DataFrame())
+
+    max_time = date(2000,1,1)
+    select_range = True
+    if select_range:
+        for n in range(len(rpi)):
+            if not rpi[n].empty:
+                max_time = max(rpi[n]["timestamp"][len(rpi[n]["timestamp"])-1], max_time)
+        start_datetime  = (max_time)-timedelta(days=days[0])
+        end_datetime = max_time  
+        for n in range(len(rpi)):
+            if not rpi[n].empty:    
+                mask = (rpi[n]['timestamp'] > start_datetime) & (rpi[n]['timestamp'] <= end_datetime)
+                rpi_temp[n] = rpi[n].loc[mask]
+
+    print(rpi_temp[0])
     frames = [i for i in rpi]
     rpi_concat = pd.concat(frames)
+    mask_concat =  (rpi_concat['timestamp'] > start_datetime) & (rpi_concat['timestamp'] <= end_datetime)
+
     if dropdown == "External temperature":    
-        fig1 = px.line(rpi_concat, x="timestamp", y="temp-external", 
+        fig1 = px.line(rpi_concat.loc[mask_concat], x="timestamp", y="temp-external", 
             color='sender_hostname',
-            labels={"name":"Raspberry Pi name", "temp-external":"Temperature [°C]", "timestamp":"Time"}, 
+            labels={"sender_hostname":"Raspberry Pi name", "temp-external":"Temperature [°C]", "timestamp":"Time"}, 
             title='External temperature')
 
         fig2 = go.Figure()
-        for n in range(len(rpi)):
-            if not rpi[n].empty:
-                fig2.add_trace(go.Violin(x=rpi[n]['sender_hostname'],
-                                        y=rpi[n]['temp-external'],
-                                        name=rpi[n]['sender_hostname'].iloc[0],
+        for n in range(len(rpi_temp)):
+            if not rpi_temp[n].empty:
+                fig2.add_trace(go.Violin(x=rpi_temp[n]['sender_hostname'],
+                                        y=rpi_temp[n]['temp-external'],
+                                        name=rpi_temp[n]['sender_hostname'].iloc[0],
                                         box_visible=True,
                                         meanline_visible=True))
         fig2.update_layout(title='External temperature comparison',showlegend=False)
         fig2.update_yaxes(title_text="Temperature [°C]")
         fig2.update_xaxes(title_text="Measurement units")
-
-        fig3 = double_y_subplots(rpi,
+        
+        fig3 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Temperature [°C]", "Diff. potential"],
                         "timestamp",
@@ -187,7 +232,7 @@ def update(n, dropdown):
                         ["RPi{}: External temperature", "RPi{}: Diff. potential CH1"],
                         "Temperature vs. Differential potential of CH1")
 
-        fig4 = double_y_subplots(rpi,
+        fig4 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Temperature [°C]", "Diff. potential"],
                         "timestamp",
@@ -243,12 +288,12 @@ def update(n, dropdown):
 
     if dropdown == "External light":
 
-        fig5 = px.line(rpi_concat, x="timestamp", y="light-external", 
+        fig5 = px.line(rpi_concat.loc[mask_concat], x="timestamp", y="light-external", 
                         color='sender_hostname',
-                        labels={"name":"Raspberry Pi name", "light-external":"Light [Lux]", "timestamp":"Time"}, 
+                        labels={"sender_hostname":"Raspberry Pi name", "light-external":"Light [Lux]", "timestamp":"Time"}, 
                         title='External light')
 
-        fig6 = double_y_subplots(rpi,
+        fig6 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Light [Lux]", "Diff. potential"],
                         "timestamp",
@@ -256,7 +301,7 @@ def update(n, dropdown):
                         ["RPi{}: External light", "RPi{}: Diff. potential CH1"],
                         "Light vs. Differential potential of CH1")
 
-        fig7 = double_y_subplots(rpi,
+        fig7 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Light [Lux]", "Diff. potential"],
                         "timestamp",
@@ -301,7 +346,7 @@ def update(n, dropdown):
 
     if dropdown == "Humidity and transpiration":
 
-        fig8 = double_y_subplots(rpi,
+        fig8 = double_y_subplots(rpi_temp,
                         "Time",
                         ["External humidity [%]", "Transpiration"],
                         "timestamp",
@@ -324,7 +369,7 @@ def update(n, dropdown):
 
     if dropdown == "Soil temperature and moisture":
                 
-        fig9 = double_y_subplots(rpi,
+        fig9 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Soil moisture [?]", "Soil temperature [°C]"],
                         "timestamp",
@@ -332,7 +377,7 @@ def update(n, dropdown):
                         ["RPi{}: Soil moisture", "RPi{}: Soil temperature"],
                         "Soil moisture and temperature")
 
-        fig10 = double_y_subplots(rpi,
+        fig10 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Soil moisture [?]", "Diff. potential"],
                         "timestamp",
@@ -340,7 +385,7 @@ def update(n, dropdown):
                         ["RPi{}: Soil moisture", "RPi{}: Diff. potential CH1"],
                         "Soil moisture vs. Differential potential of CH1")
 
-        fig11 = double_y_subplots(rpi,
+        fig11 = double_y_subplots(rpi_temp,
                         "Time",
                         ["Soil moisture [?]", "Diff. potential"],
                         "timestamp",
@@ -385,7 +430,7 @@ def update(n, dropdown):
 
     if dropdown == "Soil moisture and transpiration":
         
-        fig12 = double_y_subplots(rpi,
+        fig12 = double_y_subplots(rpi_temp,
                 "Time",
                 ["Soil moisture [?]", "Transpiration [%]"],
                 "timestamp",
@@ -409,34 +454,34 @@ def update(n, dropdown):
     if dropdown == "Differential potential":
             
         # Create figure with secondary y-axis
-        fig13 = make_subplots(rows=len(rpi), cols=1, shared_xaxes=False, x_title='Time')
+        fig13 = make_subplots(rows=len(rpi_temp), cols=1, shared_xaxes=False, x_title='Time')
 
-        for i in range(len(rpi)):
-            mini = rpi[i]['differential_potential_CH1'].min()
-            maxi = rpi[i]['differential_potential_CH1'].max()
+        for i in range(len(rpi_temp)):
+            mini = rpi_temp[i]['differential_potential_CH1'].min()
+            maxi = rpi_temp[i]['differential_potential_CH1'].max()
             if (maxi != mini):
-                ch1 = (rpi[i]['differential_potential_CH1'] - mini) / (maxi - mini)
+                ch1 = (rpi_temp[i]['differential_potential_CH1'] - mini) / (maxi - mini)
             else:
-                ch1 = rpi[i]['differential_potential_CH1'] / mini
+                ch1 = rpi_temp[i]['differential_potential_CH1'] / mini
             
-            mini = rpi[i]['differential_potential_CH2'].min()
-            maxi = rpi[i]['differential_potential_CH2'].max()
-            ch2 = (rpi[i]['differential_potential_CH2'] - mini) / (maxi - mini)
+            mini = rpi_temp[i]['differential_potential_CH2'].min()
+            maxi = rpi_temp[i]['differential_potential_CH2'].max()
+            ch2 = (rpi_temp[i]['differential_potential_CH2'] - mini) / (maxi - mini)
             if (maxi != mini):
-                ch2 = (rpi[i]['differential_potential_CH2'] - mini) / (maxi - mini)
+                ch2 = (rpi_temp[i]['differential_potential_CH2'] - mini) / (maxi - mini)
             else:
-                ch2 = rpi[i]['differential_potential_CH2'] / mini
+                ch2 = rpi_temp[i]['differential_potential_CH2'] / mini
             
             
             # Add traces
             fig13.add_trace(
-                go.Scatter(x=rpi[i]['timestamp'], y=ch1, 
+                go.Scatter(x=rpi_temp[i]['timestamp'], y=ch1, 
                         name="Differential potential CH1 RPi{}".format(i),
                         mode='lines'),
                 row=i+1, col=1,
             )
             fig13.add_trace(
-                go.Scatter(x=rpi[i]['timestamp'], y=ch2, 
+                go.Scatter(x=rpi_temp[i]['timestamp'], y=ch2, 
                         name="Differential potential CH2 RPi{}".format(i),
                         mode='lines'),
                 row=i+1, col=1,
@@ -464,6 +509,7 @@ def update(n, dropdown):
                     className='six colimns'),
             ]
 
-
 if __name__ == '__main__':
-    app.run_server(debug=True, host="0.0.0.0", port=8050)
+    app.title = 'Watchplant'
+    # app.run_server(debug=False, host="0.0.0.0", port=8050)
+    serve(server, host = '0.0.0.0', port = 8080)

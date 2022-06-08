@@ -1,5 +1,7 @@
 dash==2.4.1
 dash_daq==0.5.0
+Flask==2.1.2
 pandas==1.4.1
 plotly==5.8.0
 pyzmq==23.0.0
+waitress==2.1.2

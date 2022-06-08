@@ -6,4 +6,4 @@ RUN ["pip", "install", "-r", "requirements.txt"]
 
 COPY client/client.py .
 
-CMD ["python", "client.py"]
+CMD  waitress-serve --port=8080 client:server
